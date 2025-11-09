@@ -1,9 +1,9 @@
 # =========================================================
-# CEMINAS - GERADOR DE RELAÇÃO DE MATERIAIS (v2.0)
+# CEMINAS - GERADOR DE RELAÇÃO DE MATERIAIS (v2.1)
 # Interface Web Interativa (Streamlit Cloud)
 # ---------------------------------------------------------
 # Autor: Ellen Lousada / Engenharia Ceminas
-# Versão: 2025.11 (Entrada Manual + Upload)
+# Versão: 2025.11 (Entrada Manual + Correção Automática)
 # =========================================================
 
 import streamlit as st
@@ -81,7 +81,7 @@ modo_entrada = st.radio(
 banco_estruturas = "MateriaisEstrutura.xlsx"
 
 # ---------------------------------------------------------
-# 🔹 MODO 1 - UPLOAD (Fluxo existente)
+# 🔹 MODO 1 - UPLOAD COM CORREÇÃO INTERATIVA
 # ---------------------------------------------------------
 if modo_entrada == "📥 Enviar planilha de estruturas (.xlsx)":
     st.header("📤 Enviar planilha de estruturas do projeto")
@@ -99,7 +99,7 @@ if modo_entrada == "📥 Enviar planilha de estruturas (.xlsx)":
         obra_limpa = "".join(c for c in st.session_state["obra"] if c.isalnum() or c in (" ", "-", "_")).strip()
         arquivo_saida = f"Ceminas - Materiais - {obra_limpa}.xlsx"
 
-        gerar = st.button("⚙️ Gerar Relação de Materiais (Planilha)")
+        gerar = st.button("⚙️ Validar e Gerar Relação")
 
         if gerar:
             try:
@@ -111,8 +111,53 @@ if modo_entrada == "📥 Enviar planilha de estruturas (.xlsx)":
                     for col in df.select_dtypes(include=["object"]).columns:
                         df[col] = df[col].astype(str).str.strip().str.upper()
 
+                keys = ["ESTRUTURA", "EQUIPAMENTO", "CONDUTOR", "POSTE"]
+                chaves_banco = estruturas[keys].drop_duplicates()
+                chaves_proj = projeto[keys].drop_duplicates()
+
+                faltantes = (
+                    chaves_proj.merge(chaves_banco, on=keys, how="left", indicator=True)
+                    .query('_merge == "left_only"')
+                    .drop(columns="_merge")
+                    .reset_index(drop=True)
+                )
+
+                correcoes = {}
+
+                if not faltantes.empty:
+                    st.warning(f"⚠️ Foram encontradas {len(faltantes)} combinações inexistentes no banco.")
+                    st.markdown("Selecione como tratar cada uma:")
+
+                    with st.form("corrigir_faltantes"):
+                        for i, row in faltantes.iterrows():
+                            estrutura, equipamento, condutor, poste = row
+                            st.markdown(f"**❌ Estrutura:** {estrutura} | **Equipamento:** {equipamento} | **Condutor:** {condutor} | **Poste:** {poste}")
+                            sugestoes = estruturas[estruturas["ESTRUTURA"] == estrutura][["EQUIPAMENTO", "CONDUTOR", "POSTE"]].drop_duplicates()
+                            if sugestoes.empty:
+                                st.info("🔹 Nenhuma variação cadastrada — será ignorada.")
+                                continue
+                            opcoes = ["Ignorar esta estrutura"] + [
+                                f"{r['EQUIPAMENTO']} | {r['CONDUTOR']} | {r['POSTE']}" for _, r in sugestoes.iterrows()
+                            ]
+                            escolha = st.selectbox(f"Alternativa para {estrutura}:", opcoes, key=f"alt_{i}")
+                            if escolha != "Ignorar esta estrutura":
+                                eq, cond, pst = [x.strip() for x in escolha.split("|")]
+                                correcoes[(estrutura, equipamento, condutor, poste)] = {"EQUIPAMENTO": eq, "CONDUTOR": cond, "POSTE": pst}
+                            st.divider()
+                        submitted = st.form_submit_button("✅ Aplicar Correções e Gerar Relação")
+
+                    if not submitted:
+                        st.stop()
+
+                projeto_corrigido = projeto.copy()
+                for idx, row in projeto.iterrows():
+                    chave = (row["ESTRUTURA"], row["EQUIPAMENTO"], row["CONDUTOR"], row["POSTE"])
+                    if chave in correcoes:
+                        novo = correcoes[chave]
+                        projeto_corrigido.loc[idx, ["EQUIPAMENTO", "CONDUTOR", "POSTE"]] = [novo["EQUIPAMENTO"], novo["CONDUTOR"], novo["POSTE"]]
+
                 materiais_lista = []
-                for _, row in projeto.iterrows():
+                for _, row in projeto_corrigido.iterrows():
                     flt = (
                         (estruturas["ESTRUTURA"] == row["ESTRUTURA"]) &
                         (estruturas["EQUIPAMENTO"] == row["EQUIPAMENTO"]) &
@@ -135,7 +180,7 @@ if modo_entrada == "📥 Enviar planilha de estruturas (.xlsx)":
 
                     buffer = BytesIO()
                     relacao.to_excel(buffer, index=False)
-                    st.success(f"✅ Relação consolidada gerada com sucesso para {st.session_state['obra']}")
+                    st.success("✅ Relação consolidada gerada com sucesso!")
                     st.download_button(
                         label="📥 Baixar planilha gerada",
                         data=buffer.getvalue(),
@@ -144,11 +189,12 @@ if modo_entrada == "📥 Enviar planilha de estruturas (.xlsx)":
                     )
                 else:
                     st.warning("⚠️ Nenhuma estrutura válida encontrada.")
+
             except Exception as e:
                 st.error(f"❌ Erro: {e}")
 
 # ---------------------------------------------------------
-# 🔹 MODO 2 - INSERÇÃO MANUAL
+# 🔹 MODO 2 - INSERÇÃO MANUAL COM QUANTIDADE
 # ---------------------------------------------------------
 else:
     st.header("🧱 Inserção Manual de Estruturas")
@@ -165,19 +211,18 @@ else:
 
     with st.form("inserir_estrutura"):
         estrutura = st.selectbox("Estrutura:", sorted(banco["ESTRUTURA"].unique()))
+
         eq_opts = sorted(banco[banco["ESTRUTURA"] == estrutura]["EQUIPAMENTO"].unique())
         equipamento = st.selectbox("Equipamento:", eq_opts)
 
-        cond_opts = sorted(banco[(banco["ESTRUTURA"] == estrutura) &
-                                 (banco["EQUIPAMENTO"] == equipamento)]["CONDUTOR"].unique())
+        cond_opts = sorted(banco[(banco["ESTRUTURA"] == estrutura) & (banco["EQUIPAMENTO"] == equipamento)]["CONDUTOR"].unique())
         condutor = st.selectbox("Condutor:", cond_opts)
 
-        poste_opts = sorted(banco[(banco["ESTRUTURA"] == estrutura) &
-                                  (banco["EQUIPAMENTO"] == equipamento) &
-                                  (banco["CONDUTOR"] == condutor)]["POSTE"].unique())
+        poste_opts = sorted(banco[(banco["ESTRUTURA"] == estrutura) & (banco["EQUIPAMENTO"] == equipamento) & (banco["CONDUTOR"] == condutor)]["POSTE"].unique())
         poste = st.selectbox("Poste:", poste_opts)
 
         quantidade = st.number_input("Quantidade:", min_value=1, value=1, step=1)
+
         adicionar = st.form_submit_button("➕ Adicionar Estrutura")
 
     if adicionar:
@@ -189,7 +234,7 @@ else:
             "QUANTIDADE": quantidade
         }])
         st.session_state["manual_df"] = pd.concat([st.session_state["manual_df"], nova_linha], ignore_index=True)
-        st.success(f"✅ Estrutura {estrutura} adicionada com sucesso!")
+        st.success(f"✅ {quantidade} unidade(s) da estrutura {estrutura} adicionada(s)!")
 
     if not st.session_state["manual_df"].empty:
         st.subheader("📋 Estruturas Inseridas")
@@ -231,7 +276,7 @@ else:
 
                 buffer = BytesIO()
                 relacao.to_excel(buffer, index=False)
-                st.success(f"✅ Relação consolidada gerada com sucesso para {st.session_state['obra']}")
+                st.success("✅ Relação consolidada gerada com sucesso!")
                 st.download_button(
                     label="📥 Baixar planilha gerada",
                     data=buffer.getvalue(),
