@@ -279,7 +279,7 @@ else:
         st.error(f"❌ Erro ao carregar o banco: {e}")
         st.stop()
 
-    # ---- callbacks para resetar filhos quando pai muda ----
+    # ---- Callbacks para resetar filhos quando pai muda ----
     def on_change_estrutura():
         st.session_state.pop("MAN_EQUIPAMENTO", None)
         st.session_state.pop("MAN_CONDUTOR", None)
@@ -292,47 +292,54 @@ else:
     def on_change_cond():
         st.session_state.pop("MAN_POSTE", None)
 
-    with st.form("form_manual"):
-        col1, col2 = st.columns([1,1])
-        with col1:
-            estrutura = st.selectbox(
-                "Estrutura:",
-                sorted(banco["ESTRUTURA"].unique()),
-                key="MAN_ESTRUTURA",
-                on_change=on_change_estrutura
-            )
-        with col2:
-            eq_opts = sorted(banco[banco["ESTRUTURA"] == estrutura]["EQUIPAMENTO"].unique())
-            equipamento = st.selectbox(
-                "Equipamento:",
-                eq_opts,
-                key="MAN_EQUIPAMENTO",
-                on_change=on_change_equip
-            )
+    # ---- Seletor encadeado (fora do formulário) ----
+    col1, col2 = st.columns([1,1])
+    with col1:
+        estrutura = st.selectbox(
+            "Estrutura:",
+            sorted(banco["ESTRUTURA"].unique()),
+            key="MAN_ESTRUTURA",
+            on_change=on_change_estrutura
+        )
+    with col2:
+        eq_opts = sorted(banco[banco["ESTRUTURA"] == estrutura]["EQUIPAMENTO"].unique())
+        equipamento = st.selectbox(
+            "Equipamento:",
+            eq_opts,
+            key="MAN_EQUIPAMENTO",
+            on_change=on_change_equip
+        )
 
-        col3, col4 = st.columns([1,1])
-        with col3:
-            cond_opts = sorted(banco[(banco["ESTRUTURA"] == estrutura) & (banco["EQUIPAMENTO"] == equipamento)]["CONDUTOR"].unique())
-            condutor = st.selectbox(
-                "Condutor:",
-                cond_opts,
-                key="MAN_CONDUTOR",
-                on_change=on_change_cond
-            )
-        with col4:
-            poste_opts = sorted(banco[(banco["ESTRUTURA"] == estrutura) & (banco["EQUIPAMENTO"] == equipamento) & (banco["CONDUTOR"] == condutor)]["POSTE"].unique())
-            poste = st.selectbox(
-                "Poste:",
-                poste_opts,
-                key="MAN_POSTE"
-            )
+    col3, col4 = st.columns([1,1])
+    with col3:
+        cond_opts = sorted(banco[(banco["ESTRUTURA"] == estrutura) &
+                                 (banco["EQUIPAMENTO"] == equipamento)]["CONDUTOR"].unique())
+        condutor = st.selectbox(
+            "Condutor:",
+            cond_opts,
+            key="MAN_CONDUTOR",
+            on_change=on_change_cond
+        )
+    with col4:
+        poste_opts = sorted(banco[(banco["ESTRUTURA"] == estrutura) &
+                                  (banco["EQUIPAMENTO"] == equipamento) &
+                                  (banco["CONDUTOR"] == condutor)]["POSTE"].unique())
+        poste = st.selectbox(
+            "Poste:",
+            poste_opts,
+            key="MAN_POSTE"
+        )
 
+    st.divider()
+    st.subheader("➕ Adicionar Estrutura")
+
+    # ---- Formulário apenas para quantidade e botão ----
+    with st.form("form_manual_add"):
         qtd = st.number_input("Quantidade:", min_value=1, value=1, step=1, key="MAN_QTD")
-
         adicionou = st.form_submit_button("➕ Adicionar Estrutura")
         if adicionou:
-            if len(eq_opts)==0 or len(cond_opts)==0 or len(poste_opts)==0:
-                st.error("❌ Combinação inválida. Verifique os campos (alguma lista ficou vazia).")
+            if any(len(opt) == 0 for opt in [eq_opts, cond_opts, poste_opts]):
+                st.error("❌ Combinação inválida. Verifique os campos (alguma lista está vazia).")
             else:
                 nova = pd.DataFrame([{
                     "ESTRUTURA": estrutura,
@@ -344,22 +351,17 @@ else:
                 st.session_state["manual_df"] = pd.concat([st.session_state["manual_df"], nova], ignore_index=True)
                 st.success(f"✅ {qtd} un. de {estrutura} adicionada(s).")
 
+    # ---- Lista e geração ----
     if not st.session_state["manual_df"].empty:
         st.subheader("📋 Estruturas Inseridas")
-        # Editor com opção de remover
         df_show = st.session_state["manual_df"].copy()
         df_show["REMOVER"] = False
-        edited = st.data_editor(
-            df_show,
-            num_rows="dynamic",
-            use_container_width=True,
-            hide_index=True
-        )
+        edited = st.data_editor(df_show, num_rows="dynamic", use_container_width=True, hide_index=True)
 
-        # Aplica remoções marcadas
+        # Remove linhas marcadas
         if (edited["REMOVER"] == True).any():
             st.session_state["manual_df"] = edited.loc[edited["REMOVER"] != True, ["ESTRUTURA","EQUIPAMENTO","CONDUTOR","POSTE","QUANTIDADE"]]
-            st.info("🗑️ Itens removidos. A lista foi atualizada.")
+            st.info("🗑️ Itens removidos. Lista atualizada.")
 
         colA, colB = st.columns([1,1])
         with colA:
